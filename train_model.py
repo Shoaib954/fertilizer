@@ -35,7 +35,7 @@ os.makedirs('Datasets', exist_ok=True)
 
 def get_base_models():
     models = {
-        'LogisticRegression':         LogisticRegression(solver='liblinear', max_iter=1000, random_state=42),
+        'LogisticRegression':         LogisticRegression(max_iter=1000, random_state=42),
         'GaussianNB':                 GaussianNB(),
         'SVC':                        SVC(probability=True, random_state=42),
         'KNeighborsClassifier':       KNeighborsClassifier(n_neighbors=5),
@@ -64,7 +64,7 @@ def train_and_save(X_train, X_test, y_train, y_test, label_encoders, out_path, n
         acc = accuracy_score(y_test, model.predict(X_test))
         print(f"  {mname}: {acc:.4f}")
 
-    meta = LogisticRegression(solver='liblinear', max_iter=1000, random_state=42)
+    meta = LogisticRegression(max_iter=1000, random_state=42)
     stacking = StackingClassifier(estimators=list(base_models.items()), final_estimator=meta, cv=5)
     stacking.fit(X_train, y_train)
 
