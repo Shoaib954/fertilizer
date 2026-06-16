@@ -42,7 +42,8 @@ def individual_preds(base_models, le_target, input_df):
     rows = []
     for name, m in base_models.items():
         raw = m.predict(input_df)[0]
-        rows.append({'Model': str(name), 'Prediction': str(le_target.inverse_transform([int(raw)])[0])})
+        label = le_target.inverse_transform([int(raw)])[0] if np.issubdtype(type(raw), np.integer) else str(raw)
+        rows.append({'Model': str(name), 'Prediction': str(label)})
     return pd.DataFrame(rows)
 
 # ── Groq AI chatbot ───────────────────────────────────────────────────────────
@@ -171,7 +172,7 @@ def show_fertilizer_recommendation(prediction, confidence, temp_f, humidity_f, m
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
-st.sidebar.image("Images/shell.webp", use_container_width=True)
+st.sidebar.image("Images/shell.webp", width=280)
 page = st.sidebar.radio("Navigate", [
     "💧 Irrigation Recommendation",
     "🌿 Fertilizer Recommendation",
@@ -210,7 +211,7 @@ if page == "💧 Irrigation Recommendation":
         with c3:
             soil_type = st.selectbox('Soil Type', list(le_soil_irr.classes_))
             crop_type = st.selectbox('Crop Type', list(le_crop_irr.classes_))
-        submitted = st.form_submit_button("💧 Get Irrigation Recommendation", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("💧 Get Irrigation Recommendation", type="primary")
 
     if submitted:
         irr_input = pd.DataFrame([[
@@ -246,7 +247,7 @@ if page == "💧 Irrigation Recommendation":
         st.plotly_chart(fig3, use_container_width=True)
 
         with st.expander("📊 Individual Model Predictions", expanded=False):
-            st.dataframe(individual_preds(irr_base, le_sched, irr_input), use_container_width=True)
+            st.dataframe(individual_preds(irr_base, le_sched, irr_input), use_container_width=True, hide_index=True)
 
         context = show_irrigation_recommendation(
             prediction, confidence, soil_moisture, evapotranspiration,
@@ -286,7 +287,7 @@ elif page == "🌿 Fertilizer Recommendation":
         with c3:
             soil_type_f = st.selectbox('Soil Type', list(le_soil_fert.classes_))
             crop_type_f = st.selectbox('Crop Type', list(le_crop_fert.classes_))
-        submitted_f = st.form_submit_button("🌿 Get Fertilizer Recommendation", type="primary", use_container_width=True)
+        submitted_f = st.form_submit_button("🌿 Get Fertilizer Recommendation", type="primary")
 
     if submitted_f:
         fert_input = pd.DataFrame([[
@@ -325,7 +326,7 @@ elif page == "🌿 Fertilizer Recommendation":
         st.plotly_chart(fig3, use_container_width=True)
 
         with st.expander("📊 Individual Model Predictions", expanded=False):
-            st.dataframe(individual_preds(fert_base, le_fert, fert_input), use_container_width=True)
+            st.dataframe(individual_preds(fert_base, le_fert, fert_input), use_container_width=True, hide_index=True)
 
         context = show_fertilizer_recommendation(
             fert_pred, fert_conf, temp_f, humidity_f, moisture_f,
@@ -402,7 +403,7 @@ elif page == "🤖 AI Farm Assistant":
         ]
         cols = st.columns(len(suggestions))
         for col, suggestion in zip(cols, suggestions):
-            if col.button(suggestion, use_container_width=True):
+            if col.button(suggestion, use_container_width=True):  # buttons don't have width param yet
                 st.session_state.chat_history.append({"role": "user", "content": suggestion})
                 response = get_ai_response(st.session_state.chat_history, context, groq_api_key)
                 st.session_state.chat_history.append({"role": "assistant", "content": response})
