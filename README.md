@@ -6,30 +6,31 @@ emoji: 🌍
 colorFrom: blue
 colorTo: green
 pinned: false
-short_description: AI-powered irrigation and fertilizer recommendation system
+short_description: AI-powered crop and fertilizer recommendation system
 sdk_version: 1.43.2
 ---
 # **🌱 AI Farm Advisor**
 
 ## **📌 Introduction**
-AI-powered system that predicts the optimal **irrigation schedule** and **fertilizer** based on soil conditions, weather patterns, and crop type using a **Stacking Ensemble** of 12 ML models. Includes an **AI chatbot** powered by Groq LLaMA for farm advisory.
+AI-powered system that predicts the optimal **crop** and **fertilizer** based on soil conditions, weather patterns, and nutrient levels using a **Stacking Ensemble** of 12 ML models. Includes an **AI chatbot** powered by Groq LLaMA for farm advisory.
 
 ## **📂 Datasets**
 
-### Irrigation — `Datasets/Irrigation_recommendation.csv` — 2,000 balanced records
+### Crop Recommendation — `Datasets/Crop_recommendation.csv` — 2,200 balanced records
+Source: [Kaggle — Atharva Ingle](https://www.kaggle.com/datasets/atharvaingle/crop-recommendation-dataset)
 | Feature | Description |
 |---|---|
-| soil_moisture | Soil moisture level (%) |
-| evapotranspiration | Evapotranspiration rate (mm) |
+| N | Nitrogen content in soil |
+| P | Phosphorus content in soil |
+| K | Potassium content in soil |
 | temperature | Air temperature (°C) |
 | humidity | Relative humidity (%) |
-| rainfall | Rainfall (mm) |
 | ph | Soil pH level |
-| soil_type | Sandy / Loamy / Clayey / Black / Red |
-| crop_type | Rice / Wheat / Maize / Cotton / Sugarcane |
-| **irrigation_schedule** | **Target**: Daily / Weekly / Bi-weekly / Monthly / As-needed |
+| rainfall | Rainfall (mm) |
+| **label** | **Target**: 22 crop types (rice, wheat, maize, etc.) |
 
-### Fertilizer — `Datasets/Fertilizer_recommendation.csv` — 2,000 balanced records
+### Fertilizer Recommendation — `Datasets/Fertilizer Prediction.csv`
+Source: [Kaggle — Sanket Gondaliya](https://www.kaggle.com/datasets/sanketgondaliya/fertilizer)
 | Feature | Description |
 |---|---|
 | Temperature | Air temperature (°C) |
@@ -40,7 +41,7 @@ AI-powered system that predicts the optimal **irrigation schedule** and **fertil
 | Nitrogen | Nitrogen level (N) |
 | Potassium | Potassium level (K) |
 | Phosphorous | Phosphorous level (P) |
-| **Fertilizer** | **Target**: Urea / DAP / MOP / TSP / NPK blends |
+| **Fertilizer Name** | **Target**: Urea / DAP / 28-28 / 14-35-14 / etc. |
 
 ## **📊 Methodology**
 1. **EDA** — distribution plots, box plots, correlation heatmap
@@ -75,14 +76,13 @@ streamlit run app.py
 ```
 fertilizer/
 ├── Datasets/
-│   ├── Irrigation_recommendation.csv
-│   └── Fertilizer_recommendation.csv
+│   ├── Crop_recommendation.csv
+│   └── Fertilizer Prediction.csv
 ├── Models/
-│   ├── Irrigation_Recommendation_model.pkl
+│   ├── Crop_Recommendation_model.pkl
 │   └── Fertilizer_Recommendation_model.pkl
 ├── Images/
 │   └── shell.webp
-├── irrigation-recommendation.ipynb
 ├── train_model.py
 ├── app.py
 ├── requirements.txt
