@@ -1,11 +1,8 @@
 streamlit
-joblib
 scikit-learn==1.5.2
 numpy
 pandas
-matplotlib
 catboost
 lightgbm
 plotly
-seaborn
 groq

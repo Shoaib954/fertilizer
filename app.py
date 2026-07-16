@@ -1,37 +1,90 @@
+import warnings
+warnings.filterwarnings('ignore')
+
 import pandas as pd
 import numpy as np
-import joblib
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 from groq import Groq
 
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.naive_bayes import GaussianNB
+from sklearn.svm import SVC
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.tree import DecisionTreeClassifier, ExtraTreeClassifier
+from sklearn.ensemble import (
+    RandomForestClassifier, BaggingClassifier,
+    GradientBoostingClassifier, AdaBoostClassifier, StackingClassifier
+)
+from catboost import CatBoostClassifier
+from lightgbm import LGBMClassifier
+
 st.set_page_config(page_title="AI Farm Advisor", layout="wide", page_icon="🌱")
 
+
 @st.cache_resource
-def load_models():
-    irr  = joblib.load("Models/Irrigation_Recommendation_model.pkl")
-    fert = joblib.load("Models/Fertilizer_Recommendation_model.pkl")
-    return irr, fert
+def train_models():
+    # ── Irrigation ──────────────────────────────────────────────────────────
+    df_irr = pd.read_csv('Datasets/Irrigation_recommendation.csv')
+    le_irr = LabelEncoder().fit(df_irr['irrigation_schedule'])
+    X_irr = df_irr.drop('irrigation_schedule', axis=1)
+    y_irr = le_irr.transform(df_irr['irrigation_schedule'])
+    X_tr, X_te, y_tr, y_te = train_test_split(X_irr, y_irr, test_size=0.3, random_state=42, stratify=y_irr)
 
-irr_bundle, fert_bundle = load_models()
+    irr_base = get_base_models()
+    for m in irr_base.values():
+        m.fit(X_tr, y_tr)
+    irr_stack = StackingClassifier(estimators=list(irr_base.items()),
+                                   final_estimator=LogisticRegression(max_iter=1000, random_state=42), cv=5)
+    irr_stack.fit(X_tr, y_tr)
 
-irr_base  = irr_bundle['base_models']
-irr_meta  = irr_bundle['meta_model']
-le_irr    = irr_bundle['le_target']
+    # ── Fertilizer ──────────────────────────────────────────────────────────
+    df_fert = pd.read_csv('Datasets/Fertilizer Prediction.csv')
+    df_fert.columns = df_fert.columns.str.strip()
+    df_fert = df_fert.rename(columns={'Temparature': 'Temperature', 'Fertilizer Name': 'Fertilizer'})
+    le_soil = LabelEncoder().fit(df_fert['Soil Type'])
+    le_crop = LabelEncoder().fit(df_fert['Crop Type'])
+    le_fert = LabelEncoder().fit(df_fert['Fertilizer'])
+    X_fert = df_fert.drop('Fertilizer', axis=1).copy()
+    X_fert['Soil Type'] = le_soil.transform(X_fert['Soil Type'])
+    X_fert['Crop Type'] = le_crop.transform(X_fert['Crop Type'])
+    y_fert = le_fert.transform(df_fert['Fertilizer'])
+    X_tr2, X_te2, y_tr2, y_te2 = train_test_split(X_fert, y_fert, test_size=0.3, random_state=42, stratify=y_fert)
 
-fert_base    = fert_bundle['base_models']
-fert_meta    = fert_bundle['meta_model']
-le_soil_fert = fert_bundle['le_soil']
-le_crop_fert = fert_bundle['le_crop']
-le_fert      = fert_bundle['le_target']
+    fert_base = get_base_models()
+    for m in fert_base.values():
+        m.fit(X_tr2, y_tr2)
+    fert_stack = StackingClassifier(estimators=list(fert_base.items()),
+                                    final_estimator=LogisticRegression(max_iter=1000, random_state=42), cv=5)
+    fert_stack.fit(X_tr2, y_tr2)
+
+    return irr_base, irr_stack, le_irr, fert_base, fert_stack, le_soil, le_crop, le_fert
 
 
-def predict(base_models, meta_model, le_target, input_df):
-    base_preds = np.hstack([m.predict_proba(input_df) for m in base_models.values()])
-    idx        = meta_model.predict(base_preds)[0]
-    proba      = meta_model.predict_proba(base_preds)[0]
-    label      = le_target.inverse_transform([int(idx)])[0]
+def get_base_models():
+    return {
+        'LogisticRegression':         LogisticRegression(max_iter=1000, random_state=42),
+        'GaussianNB':                 GaussianNB(),
+        'SVC':                        SVC(probability=True, random_state=42),
+        'KNeighborsClassifier':       KNeighborsClassifier(n_neighbors=5),
+        'DecisionTreeClassifier':     DecisionTreeClassifier(random_state=42),
+        'ExtraTreeClassifier':        ExtraTreeClassifier(random_state=42),
+        'RandomForestClassifier':     RandomForestClassifier(n_estimators=100, random_state=42),
+        'BaggingClassifier':          BaggingClassifier(random_state=42),
+        'GradientBoostingClassifier': GradientBoostingClassifier(random_state=42),
+        'AdaBoostClassifier':         AdaBoostClassifier(random_state=42),
+        'CatBoostClassifier':         CatBoostClassifier(verbose=0, random_state=42),
+        'LGBMClassifier':             LGBMClassifier(verbose=-1, random_state=42),
+    }
+
+
+def predict(stack_model, le_target, input_df):
+    idx = stack_model.predict(input_df)[0]
+    proba = stack_model.predict_proba(input_df)[0]
+    label = le_target.inverse_transform([int(idx)])[0]
     return label, proba, le_target.classes_
 
 
@@ -39,35 +92,28 @@ def individual_preds(base_models, le_target, input_df):
     rows = []
     for name, m in base_models.items():
         raw = m.predict(input_df)[0]
-        label = le_target.inverse_transform([int(raw)])[0] if np.issubdtype(type(raw), np.integer) else str(raw)
-        rows.append({'Model': str(name), 'Prediction': str(label)})
+        label = le_target.inverse_transform([int(raw)])[0]
+        rows.append({'Model': name, 'Prediction': label})
     return pd.DataFrame(rows)
 
 
-def get_ai_response(messages, context="", api_key=""):
+def get_ai_response(messages, context, api_key):
     client = Groq(api_key=api_key)
     system_prompt = f"""You are an expert agricultural AI assistant specializing in irrigation scheduling and fertilizer recommendations.
 You help farmers make data-driven decisions about crop management.
-You have deep knowledge of:
-- Irrigation schedules (Daily, Weekly, Bi-weekly, Monthly, No Irrigation) based on rainfall, temperature, humidity, pH, N, P, K
-- Fertilizers (Urea, DAP, MOP, TSP, NPK blends) and their use cases
-- Soil types (Sandy, Loamy, Clayey, Black, Red) and their water/nutrient retention
-- Crops: Rice, Wheat, Maize, Cotton, Sugarcane, Paddy, Barley, etc.
-- Nitrogen, Phosphorous, Potassium roles in plant growth and irrigation needs
-
 {f'Current prediction context: {context}' if context else ''}
-
 Keep answers concise, practical and farmer-friendly. Use bullet points where helpful."""
-
-    full_messages = [{"role": "system", "content": system_prompt}] + messages
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
-        messages=full_messages,
-        max_tokens=512,
-        temperature=0.7
+        messages=[{"role": "system", "content": system_prompt}] + messages,
+        max_tokens=512, temperature=0.7
     )
     return response.choices[0].message.content
 
+
+# ── Load models ──────────────────────────────────────────────────────────────
+with st.spinner("🌱 Training AI models... please wait"):
+    irr_base, irr_stack, le_irr, fert_base, fert_stack, le_soil, le_crop, le_fert = train_models()
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 st.sidebar.image("Images/shell.webp", width=280)
@@ -81,12 +127,8 @@ st.sidebar.markdown("**Stacking Ensemble** — 12 ML models")
 st.sidebar.markdown(f"Irrigation classes: {', '.join(le_irr.classes_)}")
 st.sidebar.markdown(f"Fertilizer classes: {len(le_fert.classes_)} types")
 st.sidebar.markdown("---")
-groq_api_key = st.sidebar.text_input(
-    "🔑 Groq API Key",
-    type="password",
-    placeholder="gsk_...",
-    help="Free API key from console.groq.com"
-)
+groq_api_key = st.sidebar.text_input("🔑 Groq API Key", type="password",
+                                      placeholder="gsk_...", help="Free API key from console.groq.com")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -113,9 +155,7 @@ if page == "💧 Irrigation Recommendation":
     if submitted:
         irr_input = pd.DataFrame([[N, P, K, temperature, humidity, ph, rainfall]],
                                   columns=['N', 'P', 'K', 'temperature', 'humidity', 'ph', 'rainfall'])
-
-        with st.spinner("Running AI prediction..."):
-            prediction, proba, classes = predict(irr_base, irr_meta, le_irr, irr_input)
+        prediction, proba, classes = predict(irr_stack, le_irr, irr_input)
         confidence = proba.max() * 100
 
         st.success(f"💧 **{prediction}** irrigation schedule recommended with **{confidence:.1f}%** confidence")
@@ -124,8 +164,7 @@ if page == "💧 Irrigation Recommendation":
         with col_a:
             prob_df = pd.DataFrame({'Schedule': [str(c) for c in classes], 'Probability': proba}).sort_values('Probability')
             fig = px.bar(prob_df, x='Probability', y='Schedule', orientation='h',
-                         title='Prediction Probabilities', color='Probability',
-                         color_continuous_scale='blues')
+                         title='Prediction Probabilities', color='Probability', color_continuous_scale='blues')
             st.plotly_chart(fig, use_container_width=True)
         with col_b:
             fi = irr_base['RandomForestClassifier'].feature_importances_
@@ -140,13 +179,12 @@ if page == "💧 Irrigation Recommendation":
         fig3.update_layout(title='Your Input Values', xaxis_title='Feature', yaxis_title='Value')
         st.plotly_chart(fig3, use_container_width=True)
 
-        # Final report
         schedule_info = {
-            'Daily':          ('🔴', 'High urgency',  'Water every day. Very low rainfall and high temperature detected.'),
-            'Weekly':         ('🟠', 'Moderate-high', 'Water once a week. Monitor soil conditions closely.'),
-            'Bi-weekly':      ('🟡', 'Moderate',      'Water every two weeks. Conditions are manageable.'),
-            'Monthly':        ('🟢', 'Low',           'Water once a month. Good rainfall and humidity present.'),
-            'No Irrigation':  ('🔵', 'Minimal',       'No irrigation needed. Rainfall is sufficient.'),
+            'Daily':         ('🔴', 'High urgency',  'Water every day. Very low rainfall and high temperature detected.'),
+            'Weekly':        ('🟠', 'Moderate-high', 'Water once a week. Monitor soil conditions closely.'),
+            'Bi-weekly':     ('🟡', 'Moderate',      'Water every two weeks. Conditions are manageable.'),
+            'Monthly':       ('🟢', 'Low',           'Water once a month. Good rainfall and humidity present.'),
+            'No Irrigation': ('🔵', 'Minimal',       'No irrigation needed. Rainfall is sufficient.'),
         }
         icon, urgency, advice = schedule_info.get(prediction, ('⚪', 'Unknown', ''))
 
@@ -159,20 +197,13 @@ if page == "💧 Irrigation Recommendation":
         st.info(f"**What to do:** {advice}")
 
         tips = []
-        if rainfall < 60:
-            tips.append("⚠️ Very low rainfall — ensure irrigation system is active.")
-        if temperature > 35:
-            tips.append("☀️ High temperature — increase irrigation frequency to prevent crop stress.")
-        if humidity < 40:
-            tips.append("🌵 Low humidity — consider drip irrigation to reduce evaporation loss.")
-        if rainfall > 220:
-            tips.append("🌧️ Heavy rainfall — skip irrigation this cycle to avoid waterlogging.")
-        if ph < 5.5:
-            tips.append("🧪 Acidic soil (pH < 5.5) — consider liming before irrigation.")
-        if ph > 7.5:
-            tips.append("🧪 Alkaline soil (pH > 7.5) — monitor nutrient availability.")
-        if N < 20:
-            tips.append("🌱 Low Nitrogen — apply N-rich fertilizer alongside irrigation.")
+        if rainfall < 60:   tips.append("⚠️ Very low rainfall — ensure irrigation system is active.")
+        if temperature > 35: tips.append("☀️ High temperature — increase irrigation frequency.")
+        if humidity < 40:   tips.append("🌵 Low humidity — consider drip irrigation.")
+        if rainfall > 220:  tips.append("🌧️ Heavy rainfall — skip irrigation to avoid waterlogging.")
+        if ph < 5.5:        tips.append("🧪 Acidic soil — consider liming before irrigation.")
+        if ph > 7.5:        tips.append("🧪 Alkaline soil — monitor nutrient availability.")
+        if N < 20:          tips.append("🌱 Low Nitrogen — apply N-rich fertilizer alongside irrigation.")
         if tips:
             st.markdown("**💡 Additional Insights:**")
             for tip in tips:
@@ -213,21 +244,20 @@ elif page == "🌿 Fertilizer Recommendation":
             potassium   = st.slider('Potassium (K)', 0, 25, 10)
             phosphorous = st.slider('Phosphorous (P)', 0, 50, 20)
         with c3:
-            soil_type_f = st.selectbox('Soil Type', list(le_soil_fert.classes_))
-            crop_type_f = st.selectbox('Crop Type', list(le_crop_fert.classes_))
+            soil_type_f = st.selectbox('Soil Type', list(le_soil.classes_))
+            crop_type_f = st.selectbox('Crop Type', list(le_crop.classes_))
         submitted_f = st.form_submit_button("🌿 Get Fertilizer Recommendation", type="primary")
 
     if submitted_f:
         fert_input = pd.DataFrame([[
             temp_f, humidity_f, moisture_f,
-            le_soil_fert.transform([soil_type_f])[0],
-            le_crop_fert.transform([crop_type_f])[0],
+            le_soil.transform([soil_type_f])[0],
+            le_crop.transform([crop_type_f])[0],
             nitrogen, potassium, phosphorous
         ]], columns=['Temperature', 'Humidity', 'Moisture', 'Soil Type', 'Crop Type',
                      'Nitrogen', 'Potassium', 'Phosphorous'])
 
-        with st.spinner("Running AI prediction..."):
-            fert_pred, fert_proba, fert_classes = predict(fert_base, fert_meta, le_fert, fert_input)
+        fert_pred, fert_proba, fert_classes = predict(fert_stack, le_fert, fert_input)
         fert_conf = fert_proba.max() * 100
 
         st.success(f"🌿 **{fert_pred}** recommended with **{fert_conf:.1f}%** confidence")
@@ -237,8 +267,7 @@ elif page == "🌿 Fertilizer Recommendation":
             prob_df = pd.DataFrame({'Fertilizer': [str(c) for c in fert_classes],
                                     'Probability': fert_proba}).sort_values('Probability')
             fig = px.bar(prob_df, x='Probability', y='Fertilizer', orientation='h',
-                         title='Prediction Probabilities', color='Probability',
-                         color_continuous_scale='reds')
+                         title='Prediction Probabilities', color='Probability', color_continuous_scale='reds')
             st.plotly_chart(fig, use_container_width=True)
         with col_b:
             fi = fert_base['RandomForestClassifier'].feature_importances_
@@ -261,7 +290,7 @@ elif page == "🌿 Fertilizer Recommendation":
         fert_info = {
             'Urea':         ('🟡', 'High Nitrogen',   'Best for leafy growth. Apply during vegetative stage.'),
             'DAP':          ('🟠', 'High N+P',        'Ideal for root development and early crop growth.'),
-            'MOP':          ('🔵', 'High Potassium',  'Improves fruit quality, disease resistance and water uptake.'),
+            'MOP':          ('🔵', 'High Potassium',  'Improves fruit quality and disease resistance.'),
             'TSP':          ('🟣', 'High Phosphorus', 'Promotes strong root system and flowering.'),
             '14-35-14':     ('🟢', 'Balanced N-P-K', 'Good for flowering and fruiting stages.'),
             '28-28':        ('🔴', 'High N+P',        'Suitable for high-demand crops at early growth.'),
@@ -280,18 +309,12 @@ elif page == "🌿 Fertilizer Recommendation":
         st.info(f"**Application advice:** {advice}")
 
         tips = []
-        if nitrogen < 10:
-            tips.append("🌱 Very low Nitrogen — crop may show yellowing. Apply N-rich fertilizer.")
-        if phosphorous < 10:
-            tips.append("🌿 Low Phosphorus — poor root development expected.")
-        if potassium < 5:
-            tips.append("🍂 Low Potassium — crop susceptible to disease.")
-        if moisture_f < 30:
-            tips.append("💧 Low soil moisture — irrigate before fertilizer application for better absorption.")
-        if soil_type_f == 'Sandy':
-            tips.append("🏜️ Sandy soil — nutrients leach quickly. Use split applications.")
-        if crop_type_f in ['Paddy', 'Rice']:
-            tips.append("🌾 Paddy/Rice — apply fertilizer in standing water for uniform distribution.")
+        if nitrogen < 10:    tips.append("🌱 Very low Nitrogen — crop may show yellowing.")
+        if phosphorous < 10: tips.append("🌿 Low Phosphorus — poor root development expected.")
+        if potassium < 5:    tips.append("🍂 Low Potassium — crop susceptible to disease.")
+        if moisture_f < 30:  tips.append("💧 Low soil moisture — irrigate before fertilizer application.")
+        if soil_type_f == 'Sandy': tips.append("🏜️ Sandy soil — nutrients leach quickly. Use split applications.")
+        if crop_type_f in ['Paddy', 'Rice']: tips.append("🌾 Paddy/Rice — apply in standing water for uniform distribution.")
         if tips:
             st.markdown("**💡 Additional Insights:**")
             for tip in tips:
@@ -326,12 +349,7 @@ elif page == "🤖 AI Farm Assistant":
         st.warning("⚠️ Please enter your **Groq API Key** in the sidebar. Get a free key at [console.groq.com](https://console.groq.com)")
         st.stop()
 
-    context_parts = []
-    for key in ['irr_context', 'fert_context']:
-        if key in st.session_state:
-            context_parts.append(st.session_state[key])
-    context = " | ".join(context_parts) if context_parts else ""
-
+    context = " | ".join([st.session_state[k] for k in ['irr_context', 'fert_context'] if k in st.session_state])
     if context:
         st.info(f"💡 Context from your last predictions: {context}")
 
@@ -343,7 +361,6 @@ elif page == "🤖 AI Farm Assistant":
             st.markdown(msg['content'])
 
     user_input = st.chat_input("Ask about irrigation, fertilizers, soil, crops...")
-
     if user_input:
         st.session_state.chat_history.append({"role": "user", "content": user_input})
         with st.chat_message("user"):
