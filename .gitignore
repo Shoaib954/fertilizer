@@ -1,0 +1,7 @@
+Models/
+catboost_info/
+.venv/
+__pycache__/
+*.pkl
+*.pyc
+.ipynb_checkpoints/
